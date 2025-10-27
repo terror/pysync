@@ -1,5 +1,9 @@
 class RollingChecksum:
-  """Implements the rolling checksum described in the rsync algorithm."""
+  """
+  Implements the rolling checksum described in the rsync algorithm.
+
+  For additional reading on the algorithm, check out https://rsync.samba.org/tech_report/node3.html.
+  """
 
   _MOD = 1 << 16
 
