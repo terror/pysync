@@ -9,6 +9,7 @@ from rich.progress import (
   BarColumn,
   MofNCompleteColumn,
   Progress,
+  TaskID,
   TaskProgressColumn,
   TextColumn,
   TimeRemainingColumn,
@@ -21,10 +22,10 @@ from pysync.sync import DeltaSynchronizer, FileCopier, SyncAction, SyncError, Sy
 class _ProgressStrategy(SyncStrategy):
   """Wraps another strategy to surface per-file progress updates."""
 
-  def __init__(self, delegate: SyncStrategy, progress: Progress, task_id: int) -> None:
+  def __init__(self, delegate: SyncStrategy, progress: Progress, task_id: TaskID) -> None:
     self.delegate = delegate
     self.progress = progress
-    self.task_id = task_id
+    self.task_id: TaskID = task_id
 
   def sync_file(self, source: Path, destination: Path) -> None:
     self.delegate.sync_file(source, destination)
@@ -146,7 +147,7 @@ def _wrap_with_progress(
   if progress.disable:
     return strategy, None
 
-  task_id = progress.add_task('Syncing', total=total_files)
+  task_id: TaskID = progress.add_task('Syncing', total=total_files)
 
   wrapped = _ProgressStrategy(strategy, progress, task_id)
   return wrapped, progress

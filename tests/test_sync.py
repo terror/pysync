@@ -72,6 +72,55 @@ def test_sync_removes_extraneous_directory_symlinks(tmp_path: Path) -> None:
   assert not link.exists()
 
 
+@pytest.mark.skipif(not hasattr(os, 'symlink'), reason='symlink not supported')
+def test_sync_preserves_file_symlinks(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  target = tmp_path / 'target.txt'
+  create_file(target, 'target')
+
+  link = src / 'link.txt'
+  os.symlink(target, link)
+
+  existing = dst / 'link.txt'
+  create_file(existing, 'stale')
+
+  sync(src, dst)
+
+  dest_link = dst / 'link.txt'
+  assert dest_link.is_symlink()
+  assert os.readlink(dest_link) == os.readlink(link)
+
+
+@pytest.mark.skipif(not hasattr(os, 'symlink'), reason='symlink not supported')
+def test_sync_preserves_directory_symlinks(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  target_dir = tmp_path / 'target'
+  target_dir.mkdir()
+  create_file(target_dir / 'file.txt', 'content')
+
+  link = src / 'link'
+  os.symlink(target_dir, link, target_is_directory=True)
+
+  stale_dir = dst / 'link'
+  stale_dir.mkdir()
+  create_file(stale_dir / 'stale.txt', 'stale')
+
+  sync(src, dst)
+
+  dest_link = dst / 'link'
+  assert dest_link.is_symlink()
+  assert os.readlink(dest_link) == os.readlink(link)
+  assert not (dest_link / 'stale.txt').exists()
+
+
 def test_sync_handles_nested_directories(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
