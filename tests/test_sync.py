@@ -1,4 +1,5 @@
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -81,6 +82,42 @@ def test_sync_handles_nested_directories(tmp_path: Path) -> None:
   sync(src, dst)
 
   assert (dst / 'a' / 'b' / 'c.txt').read_text() == 'nested'
+
+
+def test_sync_preserves_directory_metadata(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+
+  nested = src / 'nested'
+  nested.mkdir()
+
+  src_mode = 0o742
+  nested_mode = 0o751
+
+  src_timestamp = 1_700_000_000
+  nested_timestamp = 1_700_000_100
+
+  os.utime(src, (src_timestamp, src_timestamp))
+  src.chmod(src_mode)
+
+  os.utime(nested, (nested_timestamp, nested_timestamp))
+  nested.chmod(nested_mode)
+
+  src_stat = src.stat()
+  nested_stat = nested.stat()
+
+  sync(src, dst)
+
+  dst_stat = dst.stat()
+  dst_nested = dst / 'nested'
+  dst_nested_stat = dst_nested.stat()
+
+  assert dst_nested.exists()
+  assert stat.S_IMODE(dst_stat.st_mode) == stat.S_IMODE(src_stat.st_mode)
+  assert stat.S_IMODE(dst_nested_stat.st_mode) == stat.S_IMODE(nested_stat.st_mode)
+  assert dst_stat.st_mtime == pytest.approx(src_stat.st_mtime, abs=1)
+  assert dst_nested_stat.st_mtime == pytest.approx(nested_stat.st_mtime, abs=1)
 
 
 def test_sync_raises_for_missing_source(tmp_path: Path) -> None:

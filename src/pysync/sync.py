@@ -255,6 +255,11 @@ def _report_action(reporter: ActionReporter | None, action: SyncAction) -> None:
     reporter(action)
 
 
+def _copy_directory_metadata(source: Path, destination: Path) -> None:
+  """Replicate metadata like permissions and timestamps from source to destination."""
+  shutil.copystat(source, destination, follow_symlinks=False)
+
+
 def sync(
   source: Path | str,
   destination: Path | str,
@@ -320,8 +325,9 @@ def _copy_missing_and_updated(
   created_dirs: set[Path],
 ) -> None:
   tracked_dirs = created_dirs
+  metadata_targets: dict[Path, Path] = {dst: src}
 
-  def ensure_directory(path: Path) -> None:
+  def ensure_directory(path: Path, source_dir: Path | None = None) -> None:
     if path.exists():
       if not path.is_dir():
         raise SyncError(f'Cannot create directory because a file exists at {path}')
@@ -332,19 +338,22 @@ def _copy_missing_and_updated(
     _report_action(reporter, SyncAction('create_dir', path))
     if not dry_run:
       path.mkdir(parents=True, exist_ok=True)
+    if source_dir is not None:
+      metadata_targets[path] = source_dir
 
   for item in src.rglob('*'):
     relative = item.relative_to(src)
     target = dst / relative
 
     if item.is_dir():
+      metadata_targets[target] = item
       if not target.exists():
-        ensure_directory(target)
+        ensure_directory(target, source_dir=item)
       elif verbose:
         _report_action(reporter, SyncAction('skip_dir', target))
       continue
 
-    ensure_directory(target.parent)
+    ensure_directory(target.parent, source_dir=item.parent)
 
     target_exists = target.exists()
     changed = True
@@ -364,6 +373,20 @@ def _copy_missing_and_updated(
       continue
 
     strategy.sync_file(item, target)
+
+  if dry_run:
+    return
+
+  def _dir_depth(path: Path) -> int:
+    if path == dst:
+      return 0
+    return len(path.relative_to(dst).parts)
+
+  for target_path, source_path in sorted(
+    metadata_targets.items(), key=lambda pair: _dir_depth(pair[0]), reverse=True
+  ):
+    if target_path.exists():
+      _copy_directory_metadata(source_path, target_path)
 
 
 def _remove_extraneous(
