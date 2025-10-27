@@ -167,7 +167,7 @@ def test_cli_copy_strategy_succeeds_without_stats(
 
   assert exit_code == 0
   captured = capsys.readouterr()
-  assert 'Delta transfer stats' not in captured.out
+  assert 'Total: transferred' not in captured.out
 
 
 def test_cli_delta_strategy_reports_stats(
@@ -189,5 +189,5 @@ def test_cli_delta_strategy_reports_stats(
 
   assert exit_code == 0
   captured = capsys.readouterr()
-  assert 'Delta transfer stats' in captured.out
+  assert 'file.bin' in captured.out
   assert 'Total: transferred' in captured.out

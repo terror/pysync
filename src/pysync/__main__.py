@@ -55,7 +55,7 @@ def _print_delta_stats(strategy: DeltaSynchronizer, destination: Path, console: 
   transferred = 0
   reused = 0
 
-  table = Table(title='Delta transfer stats', show_lines=True)
+  table = Table(show_lines=True)
   table.add_column('File', overflow='fold')
   table.add_column('Transferred')
   table.add_column('Reused')

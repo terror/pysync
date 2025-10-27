@@ -10,6 +10,8 @@ alias cov := coverage
 default:
   just --list
 
+ci: fmt test typecheck
+
 coverage:
   ./bin/coverage --verbose
 
