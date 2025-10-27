@@ -14,6 +14,82 @@ You can install **pysync** using [pip](https://pip.pypa.io/en/stable/installatio
 pip install pysync
 ```
 
+## Usage
+
+**pysync** exposes both a command-line tool and library interface.
+
+### CLI
+
+Below is the standard output of `pysync --help`, which elaborates on the various
+command-line arguments the tool accepts:
+
+```present uv run src/pysync --help
+usage: pysync source destination [--strategy {Strategy.COPY,Strategy.DELTA}] [--block-size block_size] [--dry-run] [-v]
+
+Synchronise two local directories.
+
+positional arguments:
+  source Path to the source directory
+  destination Path to the destination directory
+
+options:
+  -h --help Show this help message and exit
+  --strategy Copy files wholesale (default) or send rolling deltas. (default: Strategy.COPY)
+  --block-size Block size (bytes) for the delta strategy.
+  --dry-run Preview sync actions without modifying the destination. (default: False)
+  -v Log each action as it occurs. (default: False)
+```
+
+### Library
+
+We expose various structures that make it easy to synchronize two directories
+fast.
+
+```python
+from pathlib import Path
+
+from pysync import sync
+from pysync.sync import DeltaSynchronizer, SyncAction
+
+def log_action(action: SyncAction) -> None:
+  print(f"{action.kind}: {action.path}")
+
+strategy = DeltaSynchronizer(block_size=64 * 1024)
+
+sync(
+  Path("./source"),
+  Path("./destination"),
+  strategy=strategy,
+  dry_run=False,
+  reporter=log_action,
+  verbose=True,
+)
+```
+
+The function signature is `sync(source, destination, strategy=None, *, dry_run=False, reporter=None, verbose=False)`.
+
+- `source` and `destination` accept `pathlib.Path` instances or strings.
+- `strategy` accepts any object that implements `sync_file(source, destination)`. It defaults to `FileCopier`, which mirrors files using standard copy semantics. Use `DeltaSynchronizer` to transfer only changed blocks while tracking transfer statistics.
+- `dry_run=True` reports the planned actions without modifying the destination tree.
+- `reporter` receives `SyncAction` objects describing each operation. When `verbose=True`, the reporter also observes skipped files and directories.
+- Errors raise `SyncError`, allowing callers to retry or surface a user-friendly message.
+
+When using `DeltaSynchronizer` you can inspect per-file transfer stats:
+
+```python
+strategy = DeltaSynchronizer()
+
+sync("assets", "build/assets", strategy=strategy)
+
+stats = strategy.get_stats_for(Path("build/assets/logo.png"))
+
+if stats:
+  print(f"Transferred {stats.bytes_transferred} of {stats.total_bytes} bytes;")
+  print(f"saved {stats.bytes_saved} bytes by reusing existing data.")
+```
+
+`stats()` returns a mapping of every touched destination path to its `SyncStats` record should you need an aggregated view.
+
 ## Prior Art
 
 This project is heavily inspired by [rsync(1)](https://linux.die.net/man/1/rsync), 

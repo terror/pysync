@@ -15,8 +15,14 @@ ci: fmt test typecheck
 coverage:
   ./bin/coverage --verbose
 
+dev-deps:
+  cargo install present
+
 fmt:
    uv run ruff check --select I --fix && uv run ruff format
+
+readme:
+  present --in-place README.md
 
 test:
   uv run pytest
