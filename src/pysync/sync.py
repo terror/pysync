@@ -238,10 +238,13 @@ class SyncAction:
     'create_dir',
     'copy_file',
     'update_file',
+    'create_symlink',
+    'update_symlink',
     'remove_file',
     'remove_dir',
     'skip_file',
     'skip_dir',
+    'skip_symlink',
   ]
   path: Path
   source: Path | None = None
@@ -274,7 +277,8 @@ def sync(
 
   Missing directories are created, files are copied when their content differs,
   and files/directories that are absent in ``source`` are removed from
-  ``destination``.
+  ``destination``. Symbolic links are reproduced as links rather than being
+  dereferenced.
   """
   src = Path(source)
   dst = Path(destination)
@@ -341,38 +345,95 @@ def _copy_missing_and_updated(
     if source_dir is not None:
       metadata_targets[path] = source_dir
 
-  for item in src.rglob('*'):
+  def handle_symlink(item: Path) -> None:
     relative = item.relative_to(src)
     target = dst / relative
 
-    if item.is_dir():
+    ensure_directory(target.parent, source_dir=item.parent)
+
+    link_target = os.readlink(item)
+    target_is_symlink = target.is_symlink()
+    target_exists = target_is_symlink or target.exists()
+
+    same_link = False
+    if target_is_symlink:
+      try:
+        same_link = os.readlink(target) == link_target
+      except OSError:
+        same_link = False
+
+    if same_link:
+      if verbose:
+        _report_action(reporter, SyncAction('skip_symlink', target, source=item))
+      return
+
+    action = 'create_symlink' if not target_exists else 'update_symlink'
+    _report_action(reporter, SyncAction(action, target, source=item))
+
+    if dry_run:
+      return
+
+    if target_exists:
+      if target_is_symlink:
+        target.unlink()
+      elif target.is_dir():
+        shutil.rmtree(target)
+      else:
+        target.unlink()
+
+    target_is_directory = item.is_dir()
+    os.symlink(link_target, target, target_is_directory=target_is_directory)
+
+  for root, dirnames, filenames in os.walk(src, topdown=True, followlinks=False):
+    root_path = Path(root)
+
+    for name in list(dirnames):
+      item = root_path / name
+
+      if item.is_symlink():
+        handle_symlink(item)
+        dirnames.remove(name)
+        continue
+
+      relative = item.relative_to(src)
+      target = dst / relative
+
       metadata_targets[target] = item
       if not target.exists():
         ensure_directory(target, source_dir=item)
       elif verbose:
         _report_action(reporter, SyncAction('skip_dir', target))
-      continue
 
-    ensure_directory(target.parent, source_dir=item.parent)
+    for name in filenames:
+      item = root_path / name
 
-    target_exists = target.exists()
-    changed = True
-    if target_exists:
-      try:
-        changed = not filecmp.cmp(item, target, shallow=False)
-      except OSError:
-        changed = True
+      if item.is_symlink():
+        handle_symlink(item)
+        continue
 
-    if changed:
-      action = 'copy_file' if not target_exists else 'update_file'
-      _report_action(reporter, SyncAction(action, target, source=item))
-    elif verbose:
-      _report_action(reporter, SyncAction('skip_file', target, source=item))
+      relative = item.relative_to(src)
+      target = dst / relative
 
-    if dry_run:
-      continue
+      ensure_directory(target.parent, source_dir=item.parent)
 
-    strategy.sync_file(item, target)
+      target_exists = target.exists()
+      changed = True
+      if target_exists:
+        try:
+          changed = not filecmp.cmp(item, target, shallow=False)
+        except OSError:
+          changed = True
+
+      if changed:
+        action = 'copy_file' if not target_exists else 'update_file'
+        _report_action(reporter, SyncAction(action, target, source=item))
+      elif verbose:
+        _report_action(reporter, SyncAction('skip_file', target, source=item))
+
+      if dry_run:
+        continue
+
+      strategy.sync_file(item, target)
 
   if dry_run:
     return
