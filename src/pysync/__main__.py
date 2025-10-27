@@ -111,10 +111,13 @@ def _make_console_reporter(
     'create_dir': 'create dir',
     'copy_file': 'copy file',
     'update_file': 'update file',
+    'create_symlink': 'create symlink',
+    'update_symlink': 'update symlink',
     'remove_file': 'remove file',
     'remove_dir': 'remove dir',
     'skip_file': 'skip file',
     'skip_dir': 'skip dir',
+    'skip_symlink': 'skip symlink',
   }
   prefix = 'DRY RUN: ' if dry_run else ''
 
