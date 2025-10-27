@@ -1,7 +1,9 @@
+import sys
 from pathlib import Path
 
 import pytest
 
+from pysync.__main__ import main as cli_main
 from pysync.sync import DeltaSynchronizer, SyncError, SyncStats, sync
 
 
@@ -147,3 +149,45 @@ def test_delta_sync_truncates_when_source_shrinks(tmp_path: Path) -> None:
   assert stats.total_bytes == 0
   assert stats.bytes_transferred == 0
   assert stats.bytes_reused == 0
+
+
+def test_cli_copy_strategy_succeeds_without_stats(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  create_file(src / 'file.txt', 'hello')
+
+  monkeypatch.setattr(sys, 'argv', ['pysync', str(src), str(dst), '--strategy', 'copy'])
+
+  exit_code = cli_main()
+
+  assert exit_code == 0
+  captured = capsys.readouterr()
+  assert 'Delta transfer stats' not in captured.out
+
+
+def test_cli_delta_strategy_reports_stats(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  create_file(src / 'file.bin', 'abcdZzzz')
+  (dst / 'file.bin').write_text('abcdBBBB')
+
+  monkeypatch.setattr(
+    sys, 'argv', ['pysync', str(src), str(dst), '--strategy', 'delta', '--block-size', '4']
+  )
+
+  exit_code = cli_main()
+
+  assert exit_code == 0
+  captured = capsys.readouterr()
+  assert 'Delta transfer stats:' in captured.out
+  assert 'Total: transferred' in captured.out

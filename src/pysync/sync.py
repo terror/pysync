@@ -227,7 +227,9 @@ class DeltaSynchronizer:
     return dict(self._stats)
 
   def _record_stats(self, destination: Path, total: int, transferred: int, reused: int) -> None:
-    self._stats[destination] = SyncStats(total_bytes=total, bytes_transferred=transferred, bytes_reused=reused)
+    self._stats[destination] = SyncStats(
+      total_bytes=total, bytes_transferred=transferred, bytes_reused=reused
+    )
 
 
 def sync(source: Path | str, destination: Path | str, strategy: SyncStrategy | None = None) -> None:
