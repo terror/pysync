@@ -146,10 +146,10 @@ def main() -> int:
     else:
       sync(args.source, args.destination, strategy=strategy)
   except SyncError as exc:
-    err_console.print(f'[bold red]pysync:[/] {exc}')
+    err_console.print(f'[bold red]error:[/] {exc}')
     return 1
   except Exception as exc:  # pragma: no cover - CLI guardrail
-    err_console.print(f'[bold red]pysync:[/] {exc}')
+    err_console.print(f'[bold red]error:[/] {exc}')
     return 1
 
   if isinstance(base_strategy, DeltaSynchronizer):
