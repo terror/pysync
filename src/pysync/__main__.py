@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 
@@ -16,6 +15,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from pysync.arguments import Arguments, Strategy
 from pysync.sync import DeltaSynchronizer, FileCopier, SyncAction, SyncError, SyncStrategy, sync
 
 
@@ -32,8 +32,8 @@ class _ProgressStrategy(SyncStrategy):
     self.progress.advance(self.task_id)
 
 
-def _build_strategy(args: argparse.Namespace) -> SyncStrategy:
-  if args.strategy == 'copy':
+def _build_strategy(args: Arguments) -> SyncStrategy:
+  if args.strategy == Strategy.COPY:
     if args.block_size is not None:
       raise SyncError('--block-size can only be used with --strategy delta')
     return FileCopier()
@@ -157,63 +157,39 @@ def _wrap_with_progress(
 
 
 def main() -> int:
-  console = Console()
-  err_console = Console(stderr=True)
-  parser = argparse.ArgumentParser(description='Synchronise two local directories.')
-  parser.add_argument('source', type=Path, help='Path to the source directory')
-  parser.add_argument('destination', type=Path, help='Path to the destination directory')
-  parser.add_argument(
-    '--strategy',
-    choices=('copy', 'delta'),
-    default='copy',
-    help='Copy files wholesale (default) or send rolling deltas.',
-  )
-  parser.add_argument(
-    '--block-size',
-    type=int,
-    help='Block size (bytes) for the delta strategy.',
-  )
-  parser.add_argument(
-    '--dry-run',
-    action='store_true',
-    help='Preview sync actions without modifying the destination.',
-  )
-  parser.add_argument(
-    '-v',
-    '--verbose',
-    action='store_true',
-    help='Log each action as it occurs.',
-  )
+  arguments = Arguments.from_args()
 
-  args = parser.parse_args()
+  console, err_console = Console(), Console(stderr=True)
 
   try:
-    base_strategy = _build_strategy(args)
-    progress_enabled = not (args.dry_run or args.verbose)
+    base_strategy = _build_strategy(arguments)
+    progress_enabled = not (arguments.dry_run or arguments.verbose)
     strategy, progress_cm = _wrap_with_progress(
-      base_strategy, args.source, console, enable_progress=progress_enabled
+      base_strategy, arguments.source, console, enable_progress=progress_enabled
     )
     reporter = None
-    if args.dry_run or args.verbose:
-      reporter = _make_console_reporter(console, args.source, args.destination, args.dry_run)
+    if arguments.dry_run or arguments.verbose:
+      reporter = _make_console_reporter(
+        console, arguments.source, arguments.destination, arguments.dry_run
+      )
     if progress_cm is not None:
       with progress_cm:
         sync(
-          args.source,
-          args.destination,
+          arguments.source,
+          arguments.destination,
           strategy=strategy,
-          dry_run=args.dry_run,
+          dry_run=arguments.dry_run,
           reporter=reporter,
-          verbose=args.verbose,
+          verbose=arguments.verbose,
         )
     else:
       sync(
-        args.source,
-        args.destination,
+        arguments.source,
+        arguments.destination,
         strategy=strategy,
-        dry_run=args.dry_run,
+        dry_run=arguments.dry_run,
         reporter=reporter,
-        verbose=args.verbose,
+        verbose=arguments.verbose,
       )
   except SyncError as exc:
     err_console.print(f'[bold red]error:[/] {exc}')
@@ -222,12 +198,12 @@ def main() -> int:
     err_console.print(f'[bold red]error:[/] {exc}')
     return 1
 
-  if args.dry_run:
+  if arguments.dry_run:
     console.print('[bold yellow]Dry run complete; no changes were made.[/]')
     return 0
 
   if isinstance(base_strategy, DeltaSynchronizer):
-    _print_delta_stats(base_strategy, args.destination, console)
+    _print_delta_stats(base_strategy, arguments.destination, console)
 
   return 0
 
