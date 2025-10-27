@@ -5,9 +5,13 @@ export EDITOR := 'nvim'
 alias f := fmt
 alias t := test
 alias tc := typecheck
+alias cov := coverage
 
 default:
   just --list
+
+coverage:
+  ./bin/coverage --verbose
 
 fmt:
    uv run ruff check --select I --fix && uv run ruff format

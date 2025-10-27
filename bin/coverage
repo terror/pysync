@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "error: uv command not found. Install uv to run coverage." >&2
+  exit 1
+fi
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cd "${REPO_ROOT}"
+
+uv run --group dev pytest \
+  --cov=pysync \
+  --cov-branch \
+  --cov-report=term \
+  --cov-report=xml \
+  "$@"

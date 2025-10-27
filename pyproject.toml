@@ -35,4 +35,7 @@ indent-style = "space"
 quote-style = "single"
 
 [dependency-groups]
-dev = ["pytest>=8.4.2"]
+dev = [
+ "pytest>=8.4.2",
+ "pytest-cov>=7.0.0",
+]

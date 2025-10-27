@@ -77,8 +77,23 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Run tests
+        if: matrix.python-version != '3.12'
         run: |
           uv run pytest --verbose
+
+      - name: Run tests with coverage
+        if: matrix.python-version == '3.12'
+        run: |
+          ./bin/coverage --verbose
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: unittests
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   typecheck:
     runs-on: ubuntu-latest
