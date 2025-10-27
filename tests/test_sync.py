@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from pysync.__main__ import main as cli_main
-from pysync.sync import DeltaSynchronizer, SyncError, SyncStats, sync
+from pysync.sync import DeltaSynchronizer, SyncAction, SyncError, SyncStats, sync
 
 
 def create_file(path: Path, content: str) -> None:
@@ -151,6 +151,60 @@ def test_delta_sync_truncates_when_source_shrinks(tmp_path: Path) -> None:
   assert stats.bytes_reused == 0
 
 
+def test_sync_dry_run_reports_actions(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  create_file(src / 'new.txt', 'new')
+  create_file(src / 'changed.txt', 'updated')
+  create_file(src / 'nested' / 'child.txt', 'nested')
+  create_file(dst / 'changed.txt', 'stale')
+  create_file(dst / 'remove.txt', 'remove me')
+  create_file(src / 'unchanged.txt', 'same')
+  create_file(dst / 'unchanged.txt', 'same')
+
+  actions: list[SyncAction] = []
+
+  def reporter(action: SyncAction) -> None:
+    actions.append(action)
+
+  sync(src, dst, dry_run=True, reporter=reporter)
+
+  def has_action(kind: str, path: Path) -> bool:
+    return any(a.kind == kind and a.path == path for a in actions)
+
+  assert has_action('copy_file', dst / 'new.txt')
+  assert has_action('update_file', dst / 'changed.txt')
+  assert has_action('remove_file', dst / 'remove.txt')
+  assert has_action('create_dir', dst / 'nested')
+
+  assert not (dst / 'new.txt').exists()
+  assert (dst / 'changed.txt').read_text() == 'stale'
+  assert (dst / 'remove.txt').exists()
+  assert not (dst / 'nested').exists()
+
+
+def test_sync_verbose_logs_skips(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  create_file(src / 'file.txt', 'same')
+  create_file(dst / 'file.txt', 'same')
+
+  logged: list[SyncAction] = []
+
+  def reporter(action: SyncAction) -> None:
+    logged.append(action)
+
+  sync(src, dst, reporter=reporter, verbose=True)
+
+  assert any(action.kind == 'skip_file' for action in logged)
+
+
 def test_cli_copy_strategy_succeeds_without_stats(
   tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -191,3 +245,47 @@ def test_cli_delta_strategy_reports_stats(
   captured = capsys.readouterr()
   assert 'file.bin' in captured.out
   assert 'Total: transferred' in captured.out
+
+
+def test_cli_dry_run_outputs_actions(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  create_file(src / 'new.txt', 'new')
+  create_file(dst / 'remove.txt', 'old')
+
+  monkeypatch.setattr(sys, 'argv', ['pysync', str(src), str(dst), '--dry-run'])
+
+  exit_code = cli_main()
+
+  assert exit_code == 0
+  captured = capsys.readouterr()
+  assert 'DRY RUN: copy file' in captured.out
+  assert 'DRY RUN: remove file' in captured.out
+  assert 'Dry run complete' in captured.out
+  assert not (dst / 'new.txt').exists()
+  assert (dst / 'remove.txt').exists()
+
+
+def test_cli_verbose_outputs_actions(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+
+  create_file(src / 'file.txt', 'hello')
+
+  monkeypatch.setattr(sys, 'argv', ['pysync', str(src), str(dst), '--verbose'])
+
+  exit_code = cli_main()
+
+  assert exit_code == 0
+  captured = capsys.readouterr()
+  assert 'copy file:' in captured.out
+  assert 'Dry run complete' not in captured.out
+  assert (dst / 'file.txt').read_text() == 'hello'

@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Protocol
+from typing import Callable, Literal, Mapping, Protocol
 
 
 class SyncError(Exception):
@@ -232,7 +232,38 @@ class DeltaSynchronizer:
     )
 
 
-def sync(source: Path | str, destination: Path | str, strategy: SyncStrategy | None = None) -> None:
+@dataclass(frozen=True)
+class SyncAction:
+  kind: Literal[
+    'create_dir',
+    'copy_file',
+    'update_file',
+    'remove_file',
+    'remove_dir',
+    'skip_file',
+    'skip_dir',
+  ]
+  path: Path
+  source: Path | None = None
+
+
+ActionReporter = Callable[[SyncAction], None]
+
+
+def _report_action(reporter: ActionReporter | None, action: SyncAction) -> None:
+  if reporter is not None:
+    reporter(action)
+
+
+def sync(
+  source: Path | str,
+  destination: Path | str,
+  strategy: SyncStrategy | None = None,
+  *,
+  dry_run: bool = False,
+  reporter: ActionReporter | None = None,
+  verbose: bool = False,
+) -> None:
   """
   Mirror the contents of ``source`` into ``destination``.
 
@@ -248,40 +279,118 @@ def sync(source: Path | str, destination: Path | str, strategy: SyncStrategy | N
   if not src.is_dir():
     raise SyncError(f'Source path is not a directory: {src}')
 
-  dst.mkdir(parents=True, exist_ok=True)
   synchroniser = strategy or FileCopier()
+  tracked_dirs: set[Path] = set()
+
+  if dst.exists():
+    if not dst.is_dir():
+      raise SyncError(f'Destination path is not a directory: {dst}')
+    if verbose:
+      _report_action(reporter, SyncAction('skip_dir', dst))
+  else:
+    _report_action(reporter, SyncAction('create_dir', dst))
+    tracked_dirs.add(dst)
+    if not dry_run:
+      dst.mkdir(parents=True, exist_ok=True)
 
   try:
-    _copy_missing_and_updated(src, dst, synchroniser)
-    _remove_extraneous(src, dst)
+    _copy_missing_and_updated(
+      src,
+      dst,
+      synchroniser,
+      dry_run=dry_run,
+      reporter=reporter,
+      verbose=verbose,
+      created_dirs=tracked_dirs,
+    )
+    if dst.exists():
+      _remove_extraneous(src, dst, dry_run=dry_run, reporter=reporter)
   except OSError as exc:
     raise SyncError(str(exc)) from exc
 
 
-def _copy_missing_and_updated(src: Path, dst: Path, strategy: SyncStrategy) -> None:
+def _copy_missing_and_updated(
+  src: Path,
+  dst: Path,
+  strategy: SyncStrategy,
+  *,
+  dry_run: bool,
+  reporter: ActionReporter | None,
+  verbose: bool,
+  created_dirs: set[Path],
+) -> None:
+  tracked_dirs = created_dirs
+
+  def ensure_directory(path: Path) -> None:
+    if path.exists():
+      if not path.is_dir():
+        raise SyncError(f'Cannot create directory because a file exists at {path}')
+      return
+    if path in tracked_dirs:
+      return
+    tracked_dirs.add(path)
+    _report_action(reporter, SyncAction('create_dir', path))
+    if not dry_run:
+      path.mkdir(parents=True, exist_ok=True)
+
   for item in src.rglob('*'):
     relative = item.relative_to(src)
     target = dst / relative
 
     if item.is_dir():
-      target.mkdir(parents=True, exist_ok=True)
+      if not target.exists():
+        ensure_directory(target)
+      elif verbose:
+        _report_action(reporter, SyncAction('skip_dir', target))
       continue
 
-    target.parent.mkdir(parents=True, exist_ok=True)
+    ensure_directory(target.parent)
+
+    target_exists = target.exists()
+    changed = True
+    if target_exists:
+      try:
+        changed = not filecmp.cmp(item, target, shallow=False)
+      except OSError:
+        changed = True
+
+    if changed:
+      action = 'copy_file' if not target_exists else 'update_file'
+      _report_action(reporter, SyncAction(action, target, source=item))
+    elif verbose:
+      _report_action(reporter, SyncAction('skip_file', target, source=item))
+
+    if dry_run:
+      continue
 
     strategy.sync_file(item, target)
 
 
-def _remove_extraneous(src: Path, dst: Path) -> None:
+def _remove_extraneous(
+  src: Path,
+  dst: Path,
+  *,
+  dry_run: bool,
+  reporter: ActionReporter | None,
+) -> None:
   def _depth(p: Path) -> int:
     return len(p.relative_to(dst).parts)
+
+  if not dst.exists():
+    return
 
   for item in sorted(dst.rglob('*'), key=_depth, reverse=True):
     origin = src / item.relative_to(dst)
     if origin.exists():
       continue
 
-    if item.is_dir():
+    if item.is_dir() and not item.is_symlink():
+      _report_action(reporter, SyncAction('remove_dir', item))
+      if dry_run:
+        continue
       item.rmdir()
     else:
+      _report_action(reporter, SyncAction('remove_file', item))
+      if dry_run:
+        continue
       item.unlink()

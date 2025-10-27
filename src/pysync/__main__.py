@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from rich.console import Console
 from rich.progress import (
@@ -15,7 +15,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from pysync.sync import DeltaSynchronizer, FileCopier, SyncError, SyncStrategy, sync
+from pysync.sync import DeltaSynchronizer, FileCopier, SyncAction, SyncError, SyncStrategy, sync
 
 
 class _ProgressStrategy(SyncStrategy):
@@ -93,8 +93,43 @@ def _count_source_files(source: Path) -> int:
     return 0
 
 
+def _format_relative(path: Path, root: Path) -> str:
+  resolved_root = root.resolve()
+  try:
+    return str(path.resolve().relative_to(resolved_root)) or '.'
+  except Exception:
+    return str(path.resolve())
+
+
+def _make_console_reporter(
+  console: Console, source_root: Path, dest_root: Path, dry_run: bool
+) -> Callable[[SyncAction], None]:
+  src_root = source_root.resolve()
+  dst_root = dest_root.resolve()
+  labels = {
+    'create_dir': 'create dir',
+    'copy_file': 'copy file',
+    'update_file': 'update file',
+    'remove_file': 'remove file',
+    'remove_dir': 'remove dir',
+    'skip_file': 'skip file',
+    'skip_dir': 'skip dir',
+  }
+  prefix = 'DRY RUN: ' if dry_run else ''
+
+  def reporter(action: SyncAction) -> None:
+    label = labels[action.kind]
+    target_display = _format_relative(action.path, dst_root)
+    message = f'{label}: {target_display}'
+    if action.source is not None:
+      message += f' (from {_format_relative(action.source, src_root)})'
+    console.print(prefix + message)
+
+  return reporter
+
+
 def _wrap_with_progress(
-  strategy: SyncStrategy, source: Path, console: Console
+  strategy: SyncStrategy, source: Path, console: Console, *, enable_progress: bool = True
 ) -> Tuple[SyncStrategy, Optional[Progress]]:
   total_files = _count_source_files(source)
   progress = Progress(
@@ -105,7 +140,7 @@ def _wrap_with_progress(
     TimeRemainingColumn(),
     console=console,
     transient=True,
-    disable=not console.is_interactive or total_files == 0,
+    disable=(not enable_progress) or (not console.is_interactive) or total_files == 0,
   )
 
   if progress.disable:
@@ -134,23 +169,58 @@ def main() -> int:
     type=int,
     help='Block size (bytes) for the delta strategy.',
   )
+  parser.add_argument(
+    '--dry-run',
+    action='store_true',
+    help='Preview sync actions without modifying the destination.',
+  )
+  parser.add_argument(
+    '-v',
+    '--verbose',
+    action='store_true',
+    help='Log each action as it occurs.',
+  )
 
   args = parser.parse_args()
 
   try:
     base_strategy = _build_strategy(args)
-    strategy, progress_cm = _wrap_with_progress(base_strategy, args.source, console)
+    progress_enabled = not (args.dry_run or args.verbose)
+    strategy, progress_cm = _wrap_with_progress(
+      base_strategy, args.source, console, enable_progress=progress_enabled
+    )
+    reporter = None
+    if args.dry_run or args.verbose:
+      reporter = _make_console_reporter(console, args.source, args.destination, args.dry_run)
     if progress_cm is not None:
       with progress_cm:
-        sync(args.source, args.destination, strategy=strategy)
+        sync(
+          args.source,
+          args.destination,
+          strategy=strategy,
+          dry_run=args.dry_run,
+          reporter=reporter,
+          verbose=args.verbose,
+        )
     else:
-      sync(args.source, args.destination, strategy=strategy)
+      sync(
+        args.source,
+        args.destination,
+        strategy=strategy,
+        dry_run=args.dry_run,
+        reporter=reporter,
+        verbose=args.verbose,
+      )
   except SyncError as exc:
     err_console.print(f'[bold red]error:[/] {exc}')
     return 1
   except Exception as exc:  # pragma: no cover - CLI guardrail
     err_console.print(f'[bold red]error:[/] {exc}')
     return 1
+
+  if args.dry_run:
+    console.print('[bold yellow]Dry run complete; no changes were made.[/]')
+    return 0
 
   if isinstance(base_strategy, DeltaSynchronizer):
     _print_delta_stats(base_strategy, args.destination, console)
