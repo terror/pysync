@@ -384,7 +384,12 @@ def _remove_extraneous(
     if origin.exists():
       continue
 
-    if item.is_dir() and not item.is_symlink():
+    if item.is_symlink():
+      _report_action(reporter, SyncAction('remove_file', item))
+      if dry_run:
+        continue
+      item.unlink()
+    elif item.is_dir():
       _report_action(reporter, SyncAction('remove_dir', item))
       if dry_run:
         continue
