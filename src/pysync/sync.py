@@ -381,21 +381,20 @@ def _remove_extraneous(
 
   for item in sorted(dst.rglob('*'), key=_depth, reverse=True):
     origin = src / item.relative_to(dst)
+
     if origin.exists():
       continue
 
-    if item.is_symlink():
-      _report_action(reporter, SyncAction('remove_file', item))
-      if dry_run:
-        continue
-      item.unlink()
-    elif item.is_dir():
-      _report_action(reporter, SyncAction('remove_dir', item))
-      if dry_run:
-        continue
-      item.rmdir()
+    if item.is_dir() and not item.is_symlink():
+      action_kind = 'remove_dir'
+      remover = item.rmdir
     else:
-      _report_action(reporter, SyncAction('remove_file', item))
-      if dry_run:
-        continue
-      item.unlink()
+      action_kind = 'remove_file'
+      remover = item.unlink
+
+    _report_action(reporter, SyncAction(action_kind, item))
+
+    if dry_run:
+      continue
+
+    remover()
