@@ -1,7 +1,38 @@
 [project]
 name = "pysync"
 version = "0.1.0"
-description = "Add your description here"
+description = "A tool for synchronizing files and directories locally or over a network"
 readme = "README.md"
 requires-python = ">=3.12.3"
 dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+pysync = "pysync.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/terror/pysync"
+Issues = "https://github.com/terror/pysync"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pysync"]
+
+[tool.ruff]
+src = ["src"]
+indent-width = 2
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.format]
+docstring-code-format = true
+docstring-code-line-length = 20
+indent-style = "space"
+quote-style = "single"
+
+[dependency-groups]
+dev = ["pytest>=8.4.2"]
