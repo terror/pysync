@@ -31,6 +31,8 @@ class FileCopier:
   """Default strategy that mirrors files via whole-file copies."""
 
   def sync_file(self, source: Path, destination: Path) -> None:
+    if destination.is_symlink():
+      raise SyncError(f'Refusing to write through symbolic link: {destination}')
     if not destination.exists() or not filecmp.cmp(source, destination, shallow=False):
       shutil.copy2(source, destination)
 
@@ -99,6 +101,8 @@ class DeltaSynchronizer:
     self._stats: dict[Path, SyncStats] = {}
 
   def sync_file(self, source: Path, destination: Path) -> None:
+    if destination.is_symlink():
+      raise SyncError(f'Refusing to write through symbolic link: {destination}')
     destination_path = destination.resolve()
 
     if not destination.exists():
@@ -331,6 +335,8 @@ def sync(
   synchroniser = strategy or FileCopier()
   tracked_dirs: set[Path] = set()
 
+  if dst.is_symlink():
+    raise SyncError(f'Destination path is a symbolic link: {dst}')
   if dst.exists():
     if not dst.is_dir():
       raise SyncError(f'Destination path is not a directory: {dst}')
@@ -372,7 +378,13 @@ def _copy_missing_and_updated(
   metadata_targets: dict[Path, Path] = {dst: src}
 
   def ensure_directory(path: Path, source_dir: Path | None = None) -> None:
-    if path.exists():
+    was_symlink = path.is_symlink()
+    if was_symlink:
+      _report_action(reporter, SyncAction('remove_file', path))
+      if not dry_run:
+        path.unlink()
+
+    if not was_symlink and path.exists():
       if not path.is_dir():
         raise SyncError(f'Cannot create directory because a file exists at {path}')
       return
@@ -439,7 +451,7 @@ def _copy_missing_and_updated(
       target = dst / relative
 
       metadata_targets[target] = item
-      if not target.exists():
+      if target.is_symlink() or not target.exists():
         ensure_directory(target, source_dir=item)
       elif verbose:
         _report_action(reporter, SyncAction('skip_dir', target))
@@ -456,7 +468,13 @@ def _copy_missing_and_updated(
 
       ensure_directory(target.parent, source_dir=item.parent)
 
-      target_exists = target.exists()
+      target_is_symlink = target.is_symlink()
+      target_exists = target.exists() if not target_is_symlink else False
+      if target_is_symlink:
+        _report_action(reporter, SyncAction('remove_file', target))
+        if not dry_run:
+          target.unlink()
+
       changed = True
       if target_exists:
         try:

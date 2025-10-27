@@ -165,6 +165,70 @@ def test_sync_removes_extraneous_file_symlinks(tmp_path: Path) -> None:
   assert not stale_link.exists()
 
 
+@pytest.mark.skipif(not hasattr(os, 'symlink'), reason='symlink not supported')
+def test_sync_rejects_symlink_destination_root(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst_real = tmp_path / 'dst-real'
+  dst_link = tmp_path / 'dst'
+  src.mkdir()
+  dst_real.mkdir()
+
+  create_file(src / 'file.txt', 'content')
+
+  os.symlink(dst_real, dst_link, target_is_directory=True)
+
+  with pytest.raises(SyncError, match='symbolic link'):
+    sync(src, dst_link)
+
+
+@pytest.mark.skipif(not hasattr(os, 'symlink'), reason='symlink not supported')
+def test_sync_replaces_destination_file_symlinks(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  create_file(src / 'subdir' / 'file.txt', 'new content')
+
+  outside = tmp_path / 'outside.txt'
+  create_file(outside, 'outside')
+
+  (dst / 'subdir').mkdir()
+  os.symlink(outside, dst / 'subdir' / 'file.txt')
+
+  sync(src, dst)
+
+  target_file = dst / 'subdir' / 'file.txt'
+  assert target_file.exists()
+  assert not target_file.is_symlink()
+  assert target_file.read_text() == 'new content'
+  assert outside.read_text() == 'outside'
+
+
+@pytest.mark.skipif(not hasattr(os, 'symlink'), reason='symlink not supported')
+def test_sync_replaces_destination_directory_symlinks(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  create_file(src / 'subdir' / 'file.txt', 'content')
+
+  outside_dir = tmp_path / 'outside'
+  outside_dir.mkdir()
+
+  os.symlink(outside_dir, dst / 'subdir', target_is_directory=True)
+
+  sync(src, dst)
+
+  dest_subdir = dst / 'subdir'
+  assert dest_subdir.exists()
+  assert dest_subdir.is_dir()
+  assert not dest_subdir.is_symlink()
+  assert (dest_subdir / 'file.txt').read_text() == 'content'
+  assert not (outside_dir / 'file.txt').exists()
+
+
 def test_sync_handles_nested_directories(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
