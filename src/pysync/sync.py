@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Callable, Iterator, Literal, Mapping, Protocol
 
+from .rolling_checksum import RollingChecksum
+
 
 class SyncError(Exception):
   """Raised when directory synchronisation fails."""
@@ -69,26 +71,6 @@ def _open_readonly_buffer(path: Path) -> Iterator[_Buffer]:
   with path.open('rb') as fh:
     with mmap.mmap(fh.fileno(), length=0, access=mmap.ACCESS_READ) as mm:
       yield mm
-
-
-class _RollingChecksum:
-  """Implements the rolling checksum described in the rsync algorithm."""
-
-  _MOD = 1 << 16
-
-  def __init__(self, block: bytes, block_size: int):
-    self.block_size = block_size
-    self.s1 = sum(block) % self._MOD
-    self.s2 = (
-      sum((self.block_size - idx + 1) * byte for idx, byte in enumerate(block, start=1)) % self._MOD
-    )
-
-  def digest(self) -> int:
-    return (self.s2 << 16) | self.s1
-
-  def roll(self, out_byte: int, in_byte: int) -> None:
-    self.s1 = (self.s1 - out_byte + in_byte) % self._MOD
-    self.s2 = (self.s2 - self.block_size * out_byte + self.s1) % self._MOD
 
 
 class DeltaSynchronizer:
@@ -170,7 +152,7 @@ class DeltaSynchronizer:
           idx = 0
           last_emitted = 0
           window = src_buf[0:block_size]
-          checksum = _RollingChecksum(window, block_size)
+          checksum = RollingChecksum(window, block_size)
 
           while idx + block_size <= src_len:
             match = self._find_match(signatures, checksum.digest(), src_buf[idx : idx + block_size])
@@ -184,7 +166,7 @@ class DeltaSynchronizer:
 
               if idx + block_size <= src_len:
                 window = src_buf[idx : idx + block_size]
-                checksum = _RollingChecksum(window, block_size)
+                checksum = RollingChecksum(window, block_size)
               else:
                 break
               continue
@@ -222,7 +204,7 @@ class DeltaSynchronizer:
       if not block:
         break
 
-      checksum = _RollingChecksum(block, len(block)).digest()
+      checksum = RollingChecksum(block, len(block)).digest()
       strong = hashlib.md5(block).digest()
       signatures.setdefault(checksum, []).append(
         _BlockSignature(strong=strong, offset=offset, length=len(block))
