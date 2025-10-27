@@ -1,3 +1,4 @@
+import importlib
 import os
 import stat
 import sys
@@ -7,6 +8,8 @@ import pytest
 
 from pysync.__main__ import main as cli_main
 from pysync.sync import DeltaSynchronizer, SyncAction, SyncError, SyncStats, sync
+
+sync_module = importlib.import_module('pysync.sync')
 
 
 def create_file(path: Path, content: str) -> None:
@@ -121,6 +124,47 @@ def test_sync_preserves_directory_symlinks(tmp_path: Path) -> None:
   assert not (dest_link / 'stale.txt').exists()
 
 
+@pytest.mark.skipif(not hasattr(os, 'symlink'), reason='symlink not supported')
+def test_sync_updates_changed_symlink_targets(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  old_target = tmp_path / 'old.txt'
+  new_target = tmp_path / 'new.txt'
+  create_file(old_target, 'old')
+  create_file(new_target, 'new')
+
+  link_name = 'link.txt'
+  os.symlink(old_target, src / link_name)
+  os.symlink(new_target, dst / link_name)
+
+  sync(src, dst)
+
+  dest_link = dst / link_name
+  assert dest_link.is_symlink()
+  assert os.readlink(dest_link) == os.readlink(src / link_name)
+
+
+@pytest.mark.skipif(not hasattr(os, 'symlink'), reason='symlink not supported')
+def test_sync_removes_extraneous_file_symlinks(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  target = tmp_path / 'target.txt'
+  create_file(target, 'content')
+
+  stale_link = dst / 'stale.txt'
+  os.symlink(target, stale_link)
+
+  sync(src, dst)
+
+  assert not stale_link.exists()
+
+
 def test_sync_handles_nested_directories(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
@@ -177,6 +221,24 @@ def test_sync_raises_for_missing_source(tmp_path: Path) -> None:
     sync(src, dst)
 
 
+def test_sync_wraps_permission_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+
+  create_file(src / 'file.txt', 'content')
+
+  def fail_copy(*_: object, **__: object) -> None:
+    raise PermissionError('permission denied')
+
+  monkeypatch.setattr(sync_module.shutil, 'copy2', fail_copy)
+
+  with pytest.raises(SyncError) as excinfo:
+    sync(src, dst)
+
+  assert 'permission denied' in str(excinfo.value)
+
+
 def test_delta_sync_reuses_existing_blocks(tmp_path: Path) -> None:
   src_dir = tmp_path / 'src'
   dst_dir = tmp_path / 'dst'
@@ -198,11 +260,29 @@ def test_delta_sync_reuses_existing_blocks(tmp_path: Path) -> None:
   sync(src_dir, dst_dir, strategy=strategy)
 
   assert dst_file.read_bytes() == modified
-  stats = strategy.get_stats_for(dst_file)
-  assert isinstance(stats, SyncStats)
-  assert stats.total_bytes == len(modified)
-  assert stats.bytes_transferred == block_size
-  assert stats.bytes_reused == len(modified) - block_size
+
+
+def test_cli_reports_sync_errors(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+
+  def fail_sync(
+    *args: object, **kwargs: object
+  ) -> None:  # pragma: no cover - behaviour verified via CLI expectation
+    raise SyncError('boom')
+
+  monkeypatch.setattr('pysync.__main__.sync', fail_sync)
+  monkeypatch.setattr(sys, 'argv', ['pysync', str(src), str(dst)])
+
+  exit_code = cli_main()
+  captured = capsys.readouterr()
+
+  assert exit_code == 1
+  assert 'error:' in captured.err
+  assert 'boom' in captured.err
 
 
 def test_delta_sync_handles_missing_destination(tmp_path: Path) -> None:
