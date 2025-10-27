@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from pysync.sync import SyncError, sync
+from pysync.sync import DeltaSynchronizer, SyncError, SyncStats, sync
 
 
 def create_file(path: Path, content: str) -> None:
@@ -69,3 +69,81 @@ def test_sync_raises_for_missing_source(tmp_path: Path) -> None:
 
   with pytest.raises(SyncError):
     sync(src, dst)
+
+
+def test_delta_sync_reuses_existing_blocks(tmp_path: Path) -> None:
+  src_dir = tmp_path / 'src'
+  dst_dir = tmp_path / 'dst'
+  src_dir.mkdir()
+  dst_dir.mkdir()
+
+  src_file = src_dir / 'file.bin'
+  dst_file = dst_dir / 'file.bin'
+
+  block_size = 4
+  original = b'AAAA' + b'BBBB' + b'CCCC' + b'DDDD' + b'EEEE'
+  modified = b'AAAA' + b'ZZZZ' + b'CCCC' + b'DDDD' + b'EEEE'
+
+  dst_file.write_bytes(original)
+  src_file.write_bytes(modified)
+
+  strategy = DeltaSynchronizer(block_size=block_size)
+
+  sync(src_dir, dst_dir, strategy=strategy)
+
+  assert dst_file.read_bytes() == modified
+  stats = strategy.get_stats_for(dst_file)
+  assert isinstance(stats, SyncStats)
+  assert stats.total_bytes == len(modified)
+  assert stats.bytes_transferred == block_size
+  assert stats.bytes_reused == len(modified) - block_size
+
+
+def test_delta_sync_handles_missing_destination(tmp_path: Path) -> None:
+  src_dir = tmp_path / 'src'
+  dst_dir = tmp_path / 'dst'
+  src_dir.mkdir()
+
+  src_file = src_dir / 'file.txt'
+  src_file.write_text('content')
+
+  strategy = DeltaSynchronizer()
+  assert strategy.get_stats_for(dst_dir / 'file.txt') is None
+
+  sync(src_dir, dst_dir, strategy=strategy)
+  result_file = dst_dir / 'file.txt'
+
+  assert result_file.read_text() == 'content'
+
+  stats = strategy.get_stats_for(result_file)
+  assert isinstance(stats, SyncStats)
+  assert stats.total_bytes == len('content')
+  assert stats.bytes_transferred == len('content')
+  assert stats.bytes_reused == 0
+
+
+def test_delta_sync_truncates_when_source_shrinks(tmp_path: Path) -> None:
+  src_dir = tmp_path / 'src'
+  dst_dir = tmp_path / 'dst'
+  src_dir.mkdir()
+  dst_dir.mkdir()
+
+  src_file = src_dir / 'file.txt'
+  dst_file = dst_dir / 'file.txt'
+
+  dst_file.write_text('some longer content')
+  src_file.write_text('')
+
+  strategy = DeltaSynchronizer()
+  assert strategy.get_stats_for(dst_dir / 'file.txt') is None
+
+  sync(src_dir, dst_dir, strategy=strategy)
+  result_file = dst_dir / 'file.txt'
+
+  assert result_file.read_text() == ''
+
+  stats = strategy.get_stats_for(result_file)
+  assert isinstance(stats, SyncStats)
+  assert stats.total_bytes == 0
+  assert stats.bytes_transferred == 0
+  assert stats.bytes_reused == 0
