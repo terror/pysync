@@ -9,7 +9,7 @@ class SyncError(Exception):
   """Raised when directory synchronisation fails."""
 
 
-def sync_directories(source: Path | str, destination: Path | str) -> None:
+def sync(source: Path | str, destination: Path | str) -> None:
   """
   Mirror the contents of ``source`` into ``destination``.
 

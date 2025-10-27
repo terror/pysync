@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from pysync import sync_directories
+from pysync import sync
 
 
 def main() -> int:
@@ -15,7 +15,7 @@ def main() -> int:
   args = parser.parse_args()
 
   try:
-    sync_directories(args.source, args.destination)
+    sync(args.source, args.destination)
   except Exception as exc:  # pragma: no cover - CLI guardrail
     print(f'pysync: {exc}', file=sys.stderr)
     return 1

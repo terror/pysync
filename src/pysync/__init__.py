@@ -1,3 +1,3 @@
-from .sync import sync_directories
+from .sync import sync
 
-__all__ = ['sync_directories']
+__all__ = ['sync']
