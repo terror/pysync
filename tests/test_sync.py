@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -51,6 +52,23 @@ def test_sync_removes_extraneous_files(tmp_path: Path) -> None:
 
   assert (dst / 'kept.txt').exists()
   assert not (dst / 'remove.txt').exists()
+
+
+@pytest.mark.skipif(not hasattr(os, 'symlink'), reason='symlink not supported')
+def test_sync_removes_extraneous_directory_symlinks(tmp_path: Path) -> None:
+  src = tmp_path / 'src'
+  dst = tmp_path / 'dst'
+  src.mkdir()
+  dst.mkdir()
+
+  target = tmp_path / 'target'
+  target.mkdir()
+  link = dst / 'link'
+  os.symlink(target, link, target_is_directory=True)
+
+  sync(src, dst)
+
+  assert not link.exists()
 
 
 def test_sync_handles_nested_directories(tmp_path: Path) -> None:
