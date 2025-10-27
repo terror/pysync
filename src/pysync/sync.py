@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import filecmp
 import hashlib
+import mmap
 import os
 import shutil
 import tempfile
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal, Mapping, Protocol
+from typing import IO, Callable, Iterator, Literal, Mapping, Protocol
 
 
 class SyncError(Exception):
@@ -34,13 +36,10 @@ class FileCopier:
 
 
 @dataclass(frozen=True)
-class _CopyOp:
-  block_index: int
-
-
-@dataclass(frozen=True)
-class _LiteralOp:
-  data: bytes
+class _BlockSignature:
+  strong: bytes
+  offset: int
+  length: int
 
 
 @dataclass(frozen=True)
@@ -52,6 +51,22 @@ class SyncStats:
   @property
   def bytes_saved(self) -> int:
     return max(self.total_bytes - self.bytes_transferred, 0)
+
+
+_Buffer = bytes | mmap.mmap
+_LITERAL_CHUNK_SIZE = 1 << 20  # 1 MiB chunks for streaming writes
+
+
+@contextmanager
+def _open_readonly_buffer(path: Path) -> Iterator[_Buffer]:
+  size = path.stat().st_size
+  if size == 0:
+    yield b''
+    return
+
+  with path.open('rb') as fh:
+    with mmap.mmap(fh.fileno(), length=0, access=mmap.ACCESS_READ) as mm:
+      yield mm
 
 
 class _RollingChecksum:
@@ -86,139 +101,164 @@ class DeltaSynchronizer:
   def sync_file(self, source: Path, destination: Path) -> None:
     destination_path = destination.resolve()
 
-    src_bytes = source.read_bytes()
-
     if not destination.exists():
       shutil.copy2(source, destination)
-      self._record_stats(destination_path, len(src_bytes), len(src_bytes), 0)
+      size = source.stat().st_size
+      self._record_stats(destination_path, size, size, 0)
       return
 
-    dst_bytes = destination.read_bytes()
+    src_size = source.stat().st_size
 
-    if not src_bytes:
-      destination.write_bytes(b'')
-      shutil.copystat(source, destination, follow_symlinks=False)
+    if src_size == 0:
+      if destination.exists():
+        if destination.stat().st_size != 0:
+          destination.write_bytes(b'')
+        shutil.copystat(source, destination, follow_symlinks=False)
       self._record_stats(destination_path, 0, 0, 0)
       return
 
-    if src_bytes == dst_bytes:
+    if filecmp.cmp(source, destination, shallow=False):
       shutil.copystat(source, destination, follow_symlinks=False)
-      self._record_stats(destination_path, len(src_bytes), 0, len(src_bytes))
+      self._record_stats(destination_path, src_size, 0, src_size)
       return
 
-    ops, dst_blocks = self._build_delta(src_bytes, dst_bytes)
+    with _open_readonly_buffer(source) as src_buf:
+      src_len = len(src_buf)
+      if src_len == 0:
+        destination.write_bytes(b'')
+        shutil.copystat(source, destination, follow_symlinks=False)
+        self._record_stats(destination_path, 0, 0, 0)
+        return
 
-    if not ops:
-      # Files are identical; preserve metadata to mirror FileCopier behaviour.
-      shutil.copystat(source, destination, follow_symlinks=False)
-      self._record_stats(destination_path, len(src_bytes), 0, len(src_bytes))
-      return
+      with _open_readonly_buffer(destination) as dst_buf:
+        temp_path, literal_bytes = self._write_delta(destination, src_buf, dst_buf)
 
-    literal_bytes = sum(len(op.data) for op in ops if isinstance(op, _LiteralOp))
-    total_bytes = len(src_bytes)
-    reused_bytes = max(total_bytes - literal_bytes, 0)
-    self._apply_operations(destination, ops, dst_blocks, source)
-    self._record_stats(destination_path, total_bytes, literal_bytes, reused_bytes)
+    try:
+      os.replace(temp_path, destination)
+    except Exception:
+      with suppress(FileNotFoundError):
+        os.unlink(temp_path)
+      raise
 
-  def _build_delta(
-    self, src_bytes: bytes, dst_bytes: bytes
-  ) -> tuple[list[_CopyOp | _LiteralOp], list[bytes]]:
+    shutil.copystat(source, destination, follow_symlinks=False)
+    reused_bytes = max(src_len - literal_bytes, 0)
+    self._record_stats(destination_path, src_len, literal_bytes, reused_bytes)
+
+  def _write_delta(
+    self,
+    destination: Path,
+    src_buf: _Buffer,
+    dst_buf: _Buffer,
+  ) -> tuple[str, int]:
     block_size = self.block_size
+    src_len = len(src_buf)
+    signatures = self._index_destination_blocks(dst_buf)
 
-    if not dst_bytes or len(src_bytes) < block_size:
-      return ([_LiteralOp(src_bytes)] if src_bytes else []), []
+    literal_bytes = 0
+    temp_path = ''
 
-    dst_blocks = [dst_bytes[i : i + block_size] for i in range(0, len(dst_bytes), block_size)]
-    signatures = self._index_destination_blocks(dst_blocks)
-
-    ops: list[_CopyOp | _LiteralOp] = []
-    src_len = len(src_bytes)
-    idx = 0
-    last_emitted = 0
-
-    # Initialise rolling checksum for the first window.
-    window = src_bytes[0:block_size]
-    checksum = _RollingChecksum(window, block_size)
-
-    while idx + block_size <= src_len:
-      match_index = self._find_match(
-        signatures, checksum.digest(), src_bytes[idx : idx + block_size]
-      )
-
-      if match_index is not None:
-        if last_emitted < idx:
-          ops.append(_LiteralOp(src_bytes[last_emitted:idx]))
-        ops.append(_CopyOp(match_index))
-        idx += block_size
-        last_emitted = idx
-
-        if idx + block_size <= src_len:
-          window = src_bytes[idx : idx + block_size]
-          checksum = _RollingChecksum(window, block_size)
+    try:
+      with tempfile.NamedTemporaryFile(delete=False, dir=destination.parent) as tmp:
+        temp_path = tmp.name
+        if not signatures or src_len < block_size:
+          literal_bytes = self._write_slice(tmp, src_buf, 0, src_len)
         else:
-          break
-        continue
+          idx = 0
+          last_emitted = 0
+          window = src_buf[0:block_size]
+          checksum = _RollingChecksum(window, block_size)
 
-      if idx + block_size >= src_len:
+          while idx + block_size <= src_len:
+            match = self._find_match(signatures, checksum.digest(), src_buf[idx : idx + block_size])
+
+            if match is not None:
+              if last_emitted < idx:
+                literal_bytes += self._write_slice(tmp, src_buf, last_emitted, idx)
+              self._copy_block(tmp, dst_buf, match.offset, match.length)
+              idx += block_size
+              last_emitted = idx
+
+              if idx + block_size <= src_len:
+                window = src_buf[idx : idx + block_size]
+                checksum = _RollingChecksum(window, block_size)
+              else:
+                break
+              continue
+
+            if idx + block_size >= src_len:
+              break
+
+            out_byte = src_buf[idx]
+            in_byte = src_buf[idx + block_size]
+            checksum.roll(out_byte, in_byte)
+            idx += 1
+
+          if last_emitted < src_len:
+            literal_bytes += self._write_slice(tmp, src_buf, last_emitted, src_len)
+    except Exception:
+      if temp_path:
+        Path(temp_path).unlink(missing_ok=True)
+      raise
+
+    return temp_path, literal_bytes
+
+  def _index_destination_blocks(self, buffer: _Buffer) -> dict[int, list[_BlockSignature]]:
+    block_size = self.block_size
+    length = len(buffer)
+
+    if length == 0:
+      return {}
+
+    signatures: dict[int, list[_BlockSignature]] = {}
+    offset = 0
+
+    while offset < length:
+      end = min(offset + block_size, length)
+      block = buffer[offset:end]
+      if not block:
         break
 
-      out_byte = src_bytes[idx]
-      in_byte = src_bytes[idx + block_size]
-      checksum.roll(out_byte, in_byte)
-      idx += 1
-
-    if last_emitted < src_len:
-      ops.append(_LiteralOp(src_bytes[last_emitted:]))
-
-    return ops, dst_blocks
-
-  def _index_destination_blocks(
-    self, dst_blocks: list[bytes]
-  ) -> dict[int, list[tuple[bytes, int]]]:
-    signatures: dict[int, list[tuple[bytes, int]]] = {}
-
-    for index, block in enumerate(dst_blocks):
-      if not block:
-        continue
       checksum = _RollingChecksum(block, len(block)).digest()
       strong = hashlib.md5(block).digest()
-      signatures.setdefault(checksum, []).append((strong, index))
+      signatures.setdefault(checksum, []).append(
+        _BlockSignature(strong=strong, offset=offset, length=len(block))
+      )
+      offset += block_size
 
     return signatures
 
   def _find_match(
     self,
-    signatures: dict[int, list[tuple[bytes, int]]],
+    signatures: dict[int, list[_BlockSignature]],
     weak_checksum: int,
     window: bytes,
-  ) -> int | None:
+  ) -> _BlockSignature | None:
     candidates = signatures.get(weak_checksum)
     if not candidates:
       return None
 
     strong = hashlib.md5(window).digest()
-    for candidate_strong, index in candidates:
-      if candidate_strong == strong:
-        return index
+    for candidate in candidates:
+      if candidate.strong == strong:
+        return candidate
     return None
 
-  def _apply_operations(
-    self,
-    destination: Path,
-    ops: list[_CopyOp | _LiteralOp],
-    dst_blocks: list[bytes],
-    source: Path,
-  ) -> None:
-    with tempfile.NamedTemporaryFile(delete=False, dir=destination.parent) as tmp:
-      for op in ops:
-        if isinstance(op, _CopyOp):
-          tmp.write(dst_blocks[op.block_index])
-        else:
-          tmp.write(op.data)
-      temp_name = tmp.name
+  def _write_slice(self, writer: IO[bytes], buffer: _Buffer, start: int, end: int) -> int:
+    if end <= start:
+      return 0
 
-    os.replace(temp_name, destination)
-    shutil.copystat(source, destination, follow_symlinks=False)
+    written = 0
+    chunk_start = start
+    while chunk_start < end:
+      chunk_end = min(chunk_start + _LITERAL_CHUNK_SIZE, end)
+      writer.write(buffer[chunk_start:chunk_end])
+      written += chunk_end - chunk_start
+      chunk_start = chunk_end
+    return written
+
+  def _copy_block(self, writer: IO[bytes], buffer: _Buffer, offset: int, length: int) -> None:
+    end = offset + max(length, 0)
+    self._write_slice(writer, buffer, offset, end)
 
   def get_stats_for(self, path: Path) -> SyncStats | None:
     return self._stats.get(path.resolve())
