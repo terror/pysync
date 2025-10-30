@@ -48,13 +48,12 @@ fast.
 ```python
 from pathlib import Path
 
-from pysync import sync
-from pysync.sync import DeltaSynchronizer, SyncAction
+from pysync import DeltaStrategy, SyncAction, sync
 
 def log_action(action: SyncAction) -> None:
   print(f"{action.kind}: {action.path}")
 
-strategy = DeltaSynchronizer(block_size=64 * 1024)
+strategy = DeltaStrategy(block_size=64 * 1024)
 
 sync(
   Path("./source"),
@@ -69,19 +68,21 @@ sync(
 The function signature is `sync(source, destination, strategy=None, *, dry_run=False, reporter=None, verbose=False)`.
 
 - `source` and `destination` accept `pathlib.Path` instances or strings.
-- `strategy` accepts any object that implements `sync_file(source, destination)`. It defaults to `FileCopier`, which mirrors files using standard copy semantics. Use `DeltaSynchronizer` to transfer only changed blocks while tracking transfer statistics.
+- `strategy` accepts any object that implements `sync_file(source, destination)`. It defaults to `FileCopierStrategy`, which mirrors files using standard copy semantics. Use `DeltaStrategy` to transfer only changed blocks while tracking transfer statistics.
 - `dry_run=True` reports the planned actions without modifying the destination tree.
 - `reporter` receives `SyncAction` objects describing each operation. When `verbose=True`, the reporter also observes skipped files and directories.
 - Errors raise `SyncError`, allowing callers to retry or surface a user-friendly message.
 
-When using `DeltaSynchronizer` you can inspect per-file transfer stats:
+When using `DeltaStrategy` you can inspect per-file transfer stats:
 
 ```python
-strategy = DeltaSynchronizer()
+from pysync import DeltaStrategy, SyncStats, sync
+
+strategy = DeltaStrategy()
 
 sync("assets", "build/assets", strategy=strategy)
 
-stats = strategy.get_stats_for(Path("build/assets/logo.png"))
+stats: SyncStats = strategy.get_stats_for(Path("build/assets/logo.png"))
 
 if stats:
   print(f"Transferred {stats.bytes_transferred} of {stats.total_bytes} bytes;")
