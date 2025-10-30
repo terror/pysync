@@ -1,12 +1,10 @@
 import importlib
 import os
 import stat
-import sys
 from pathlib import Path
 
 import pytest
 
-from pysync.__main__ import main as cli_main
 from pysync.stats import SyncStats
 from pysync.strategy import DeltaStrategy
 from pysync.sync import SyncAction, SyncError, sync
@@ -22,6 +20,7 @@ def create_file(path: Path, content: str) -> None:
 def test_sync_copies_new_files(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
 
   create_file(src / 'example.txt', 'hello')
@@ -34,6 +33,7 @@ def test_sync_copies_new_files(tmp_path: Path) -> None:
 def test_sync_updates_changed_files(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -48,6 +48,7 @@ def test_sync_updates_changed_files(tmp_path: Path) -> None:
 def test_sync_removes_extraneous_files(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -64,11 +65,13 @@ def test_sync_removes_extraneous_files(tmp_path: Path) -> None:
 def test_sync_removes_extraneous_directory_symlinks(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
   target = tmp_path / 'target'
   target.mkdir()
+
   link = dst / 'link'
   os.symlink(target, link, target_is_directory=True)
 
@@ -81,6 +84,7 @@ def test_sync_removes_extraneous_directory_symlinks(tmp_path: Path) -> None:
 def test_sync_preserves_file_symlinks(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -96,6 +100,7 @@ def test_sync_preserves_file_symlinks(tmp_path: Path) -> None:
   sync(src, dst)
 
   dest_link = dst / 'link.txt'
+
   assert dest_link.is_symlink()
   assert os.readlink(dest_link) == os.readlink(link)
 
@@ -104,6 +109,7 @@ def test_sync_preserves_file_symlinks(tmp_path: Path) -> None:
 def test_sync_preserves_directory_symlinks(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -121,6 +127,7 @@ def test_sync_preserves_directory_symlinks(tmp_path: Path) -> None:
   sync(src, dst)
 
   dest_link = dst / 'link'
+
   assert dest_link.is_symlink()
   assert os.readlink(dest_link) == os.readlink(link)
   assert not (dest_link / 'stale.txt').exists()
@@ -130,6 +137,7 @@ def test_sync_preserves_directory_symlinks(tmp_path: Path) -> None:
 def test_sync_updates_changed_symlink_targets(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -145,6 +153,7 @@ def test_sync_updates_changed_symlink_targets(tmp_path: Path) -> None:
   sync(src, dst)
 
   dest_link = dst / link_name
+
   assert dest_link.is_symlink()
   assert os.readlink(dest_link) == os.readlink(src / link_name)
 
@@ -153,6 +162,7 @@ def test_sync_updates_changed_symlink_targets(tmp_path: Path) -> None:
 def test_sync_removes_extraneous_file_symlinks(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -172,6 +182,7 @@ def test_sync_rejects_symlink_destination_root(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst_real = tmp_path / 'dst-real'
   dst_link = tmp_path / 'dst'
+
   src.mkdir()
   dst_real.mkdir()
 
@@ -187,6 +198,7 @@ def test_sync_rejects_symlink_destination_root(tmp_path: Path) -> None:
 def test_sync_replaces_destination_file_symlinks(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -201,6 +213,7 @@ def test_sync_replaces_destination_file_symlinks(tmp_path: Path) -> None:
   sync(src, dst)
 
   target_file = dst / 'subdir' / 'file.txt'
+
   assert target_file.exists()
   assert not target_file.is_symlink()
   assert target_file.read_text() == 'new content'
@@ -211,6 +224,7 @@ def test_sync_replaces_destination_file_symlinks(tmp_path: Path) -> None:
 def test_sync_replaces_destination_directory_symlinks(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -224,6 +238,7 @@ def test_sync_replaces_destination_directory_symlinks(tmp_path: Path) -> None:
   sync(src, dst)
 
   dest_subdir = dst / 'subdir'
+
   assert dest_subdir.exists()
   assert dest_subdir.is_dir()
   assert not dest_subdir.is_symlink()
@@ -234,6 +249,7 @@ def test_sync_replaces_destination_directory_symlinks(tmp_path: Path) -> None:
 def test_sync_handles_nested_directories(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
 
   create_file(src / 'a' / 'b' / 'c.txt', 'nested')
@@ -246,8 +262,8 @@ def test_sync_handles_nested_directories(tmp_path: Path) -> None:
 def test_sync_preserves_directory_metadata(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
-  src.mkdir()
 
+  src.mkdir()
   nested = src / 'nested'
   nested.mkdir()
 
@@ -290,6 +306,7 @@ def test_sync_raises_for_missing_source(tmp_path: Path) -> None:
 def test_sync_wraps_permission_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
 
   create_file(src / 'file.txt', 'content')
@@ -308,6 +325,7 @@ def test_sync_wraps_permission_errors(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_delta_sync_reuses_existing_blocks(tmp_path: Path) -> None:
   src_dir = tmp_path / 'src'
   dst_dir = tmp_path / 'dst'
+
   src_dir.mkdir()
   dst_dir.mkdir()
 
@@ -328,27 +346,22 @@ def test_delta_sync_reuses_existing_blocks(tmp_path: Path) -> None:
   assert dst_file.read_bytes() == modified
 
 
-def test_cli_reports_sync_errors(
-  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_reports_sync_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_cli) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
   src.mkdir()
 
   def fail_sync(
-    *args: object, **kwargs: object
+    *args: object, **kwards: object
   ) -> None:  # pragma: no cover - behaviour verified via CLI expectation
     raise SyncError('boom')
 
   monkeypatch.setattr('pysync.__main__.sync', fail_sync)
-  monkeypatch.setattr(sys, 'argv', ['pysync', str(src), str(dst)])
+  result = run_cli(tmp_path, src, dst)
 
-  exit_code = cli_main()
-  captured = capsys.readouterr()
-
-  assert exit_code == 1
-  assert 'error:' in captured.err
-  assert 'boom' in captured.err
+  assert result.exit_code == 1
+  assert 'error:' in result.stderr
+  assert 'boom' in result.stderr
 
 
 def test_delta_sync_handles_missing_destination(tmp_path: Path) -> None:
@@ -368,6 +381,7 @@ def test_delta_sync_handles_missing_destination(tmp_path: Path) -> None:
   assert result_file.read_text() == 'content'
 
   stats = strategy.get_stats_for(result_file)
+
   assert isinstance(stats, SyncStats)
   assert stats.total_bytes == len('content')
   assert stats.bytes_transferred == len('content')
@@ -377,6 +391,7 @@ def test_delta_sync_handles_missing_destination(tmp_path: Path) -> None:
 def test_delta_sync_truncates_when_source_shrinks(tmp_path: Path) -> None:
   src_dir = tmp_path / 'src'
   dst_dir = tmp_path / 'dst'
+
   src_dir.mkdir()
   dst_dir.mkdir()
 
@@ -390,11 +405,13 @@ def test_delta_sync_truncates_when_source_shrinks(tmp_path: Path) -> None:
   assert strategy.get_stats_for(dst_dir / 'file.txt') is None
 
   sync(src_dir, dst_dir, strategy=strategy)
+
   result_file = dst_dir / 'file.txt'
 
   assert result_file.read_text() == ''
 
   stats = strategy.get_stats_for(result_file)
+
   assert isinstance(stats, SyncStats)
   assert stats.total_bytes == 0
   assert stats.bytes_transferred == 0
@@ -404,6 +421,7 @@ def test_delta_sync_truncates_when_source_shrinks(tmp_path: Path) -> None:
 def test_sync_dry_run_reports_actions(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -439,6 +457,7 @@ def test_sync_dry_run_reports_actions(tmp_path: Path) -> None:
 def test_sync_verbose_logs_skips(tmp_path: Path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -455,87 +474,69 @@ def test_sync_verbose_logs_skips(tmp_path: Path) -> None:
   assert any(action.kind == 'skip_file' for action in logged)
 
 
-def test_cli_copy_strategy_succeeds_without_stats(
-  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_copy_strategy_succeeds_without_stats(tmp_path: Path, run_cli) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
   create_file(src / 'file.txt', 'hello')
 
-  monkeypatch.setattr(sys, 'argv', ['pysync', str(src), str(dst), '--strategy', 'copy'])
+  result = run_cli(tmp_path, src, dst, '--strategy', 'copy')
 
-  exit_code = cli_main()
-
-  assert exit_code == 0
-  captured = capsys.readouterr()
-  assert 'Total: transferred' not in captured.out
+  assert result.exit_code == 0
+  assert 'Total: transferred' not in result.stdout
 
 
-def test_cli_delta_strategy_reports_stats(
-  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_delta_strategy_reports_stats(tmp_path: Path, run_cli) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
   create_file(src / 'file.bin', 'abcdZzzz')
   (dst / 'file.bin').write_text('abcdBBBB')
 
-  monkeypatch.setattr(
-    sys, 'argv', ['pysync', str(src), str(dst), '--strategy', 'delta', '--block-size', '4']
-  )
+  result = run_cli(tmp_path, src, dst, '--strategy', 'delta', '--block-size', '4')
 
-  exit_code = cli_main()
-
-  assert exit_code == 0
-  captured = capsys.readouterr()
-  assert 'file.bin' in captured.out
-  assert 'Total: transferred' in captured.out
+  assert result.exit_code == 0
+  assert 'file.bin' in result.stdout
+  assert 'Total: transferred' in result.stdout
 
 
-def test_cli_dry_run_outputs_actions(
-  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_dry_run_outputs_actions(tmp_path: Path, run_cli) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
   create_file(src / 'new.txt', 'new')
   create_file(dst / 'remove.txt', 'old')
 
-  monkeypatch.setattr(sys, 'argv', ['pysync', str(src), str(dst), '--dry-run'])
+  result = run_cli(tmp_path, src, dst, '--dry-run')
 
-  exit_code = cli_main()
-
-  assert exit_code == 0
-  captured = capsys.readouterr()
-  assert 'DRY RUN: copy file' in captured.out
-  assert 'DRY RUN: remove file' in captured.out
-  assert 'Dry run complete' in captured.out
+  assert result.exit_code == 0
+  assert 'DRY RUN: copy file' in result.stdout
+  assert 'DRY RUN: remove file' in result.stdout
+  assert 'Dry run complete' in result.stdout
   assert not (dst / 'new.txt').exists()
   assert (dst / 'remove.txt').exists()
 
 
-def test_cli_verbose_outputs_actions(
-  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_verbose_outputs_actions(tmp_path: Path, run_cli) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
 
   create_file(src / 'file.txt', 'hello')
 
-  monkeypatch.setattr(sys, 'argv', ['pysync', str(src), str(dst), '--verbose'])
+  result = run_cli(tmp_path, src, dst, '--verbose')
 
-  exit_code = cli_main()
-
-  assert exit_code == 0
-  captured = capsys.readouterr()
-  assert 'copy file:' in captured.out
-  assert 'Dry run complete' not in captured.out
+  assert result.exit_code == 0
+  assert 'copy file:' in result.stdout
+  assert 'Dry run complete' not in result.stdout
   assert (dst / 'file.txt').read_text() == 'hello'
