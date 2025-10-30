@@ -32,8 +32,7 @@ class FileCopierStrategy:
     if destination.is_symlink():
       raise SyncError(f'Refusing to write through symbolic link: {destination}')
 
-    if not destination.exists() or not filecmp.cmp(source, destination, shallow=False):
-      shutil.copy2(source, destination)
+    shutil.copy2(source, destination)
 
 
 @dataclass(frozen=True)
