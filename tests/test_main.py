@@ -11,6 +11,7 @@ from pysync.sync import SyncAction
 def test_console_reporter_handles_symlink_actions(tmp_path) -> None:
   src = tmp_path / 'src'
   dst = tmp_path / 'dst'
+
   src.mkdir()
   dst.mkdir()
 
@@ -28,6 +29,7 @@ def test_console_reporter_handles_symlink_actions(tmp_path) -> None:
     reporter(action)
 
   output = stream.getvalue().strip().splitlines()
+
   assert output == [
     'DRY RUN: create symlink: link (from link-target)',
     'DRY RUN: update symlink: other-link (from other-target)',

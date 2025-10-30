@@ -16,7 +16,8 @@ from rich.progress import (
 from rich.table import Table
 
 from pysync.arguments import Arguments, Strategy
-from pysync.sync import DeltaSynchronizer, FileCopier, SyncAction, SyncError, SyncStrategy, sync
+from pysync.strategy import DeltaStrategy, FileCopierStrategy
+from pysync.sync import SyncAction, SyncError, SyncStrategy, sync
 
 
 class _ProgressStrategy(SyncStrategy):
@@ -36,17 +37,20 @@ def _build_strategy(args: Arguments) -> SyncStrategy:
   if args.strategy == Strategy.COPY:
     if args.block_size is not None:
       raise SyncError('--block-size can only be used with --strategy delta')
-    return FileCopier()
+
+    return FileCopierStrategy()
 
   if args.block_size is not None and args.block_size <= 0:
     raise SyncError('--block-size must be a positive integer')
 
   block_size = args.block_size if args.block_size is not None else 64 * 1024
-  return DeltaSynchronizer(block_size=block_size)
+
+  return DeltaStrategy(block_size=block_size)
 
 
-def _print_delta_stats(strategy: DeltaSynchronizer, destination: Path, console: Console) -> None:
+def _print_delta_stats(strategy: DeltaStrategy, destination: Path, console: Console) -> None:
   stats = strategy.stats()
+
   if not stats:
     console.print('[bold cyan]Delta transfer stats:[/] no files processed.')
     return
@@ -66,10 +70,12 @@ def _print_delta_stats(strategy: DeltaSynchronizer, destination: Path, console: 
     total_bytes += entry.total_bytes
     transferred += entry.bytes_transferred
     reused += entry.bytes_reused
+
     try:
       display = path.relative_to(dest_root)
     except ValueError:
       display = path
+
     table.add_row(
       str(display),
       f'{entry.bytes_transferred:,} B',
@@ -78,7 +84,9 @@ def _print_delta_stats(strategy: DeltaSynchronizer, destination: Path, console: 
     )
 
   bytes_saved = max(total_bytes - transferred, 0)
+
   console.print(table)
+
   console.print(
     '[bold green]Total:[/] '
     f'transferred {transferred:,} bytes | '
@@ -107,6 +115,7 @@ def _make_console_reporter(
 ) -> Callable[[SyncAction], None]:
   src_root = source_root.resolve()
   dst_root = dest_root.resolve()
+
   labels = {
     'create_dir': 'create dir',
     'copy_file': 'copy file',
@@ -119,14 +128,15 @@ def _make_console_reporter(
     'skip_dir': 'skip dir',
     'skip_symlink': 'skip symlink',
   }
+
   prefix = 'DRY RUN: ' if dry_run else ''
 
   def reporter(action: SyncAction) -> None:
-    label = labels[action.kind]
-    target_display = _format_relative(action.path, dst_root)
-    message = f'{label}: {target_display}'
+    message = f'{labels[action.kind]}: {_format_relative(action.path, dst_root)}'
+
     if action.source is not None:
       message += f' (from {_format_relative(action.source, src_root)})'
+
     console.print(prefix + message)
 
   return reporter
@@ -136,6 +146,7 @@ def _wrap_with_progress(
   strategy: SyncStrategy, source: Path, console: Console, *, enable_progress: bool = True
 ) -> Tuple[SyncStrategy, Optional[Progress]]:
   total_files = _count_source_files(source)
+
   progress = Progress(
     TextColumn('[progress.description]{task.description}'),
     BarColumn(),
@@ -152,8 +163,7 @@ def _wrap_with_progress(
 
   task_id: TaskID = progress.add_task('Syncing', total=total_files)
 
-  wrapped = _ProgressStrategy(strategy, progress, task_id)
-  return wrapped, progress
+  return _ProgressStrategy(strategy, progress, task_id), progress
 
 
 def main() -> int:
@@ -163,11 +173,15 @@ def main() -> int:
 
   try:
     base_strategy = _build_strategy(arguments)
+
     progress_enabled = not (arguments.dry_run or arguments.verbose)
+
     strategy, progress_cm = _wrap_with_progress(
       base_strategy, arguments.source, console, enable_progress=progress_enabled
     )
+
     reporter = None
+
     if arguments.dry_run or arguments.verbose:
       reporter = _make_console_reporter(
         console, arguments.source, arguments.destination, arguments.dry_run
@@ -202,7 +216,7 @@ def main() -> int:
     console.print('[bold yellow]Dry run complete; no changes were made.[/]')
     return 0
 
-  if isinstance(base_strategy, DeltaSynchronizer):
+  if isinstance(base_strategy, DeltaStrategy):
     _print_delta_stats(base_strategy, arguments.destination, console)
 
   return 0

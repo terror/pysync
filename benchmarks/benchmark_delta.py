@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from pysync.sync import DeltaSynchronizer, SyncStats
+from pysync.stats import SyncStats
+from pysync.strategy import DeltaStrategy
 
 
 def _write_pattern(path: Path, size_bytes: int, *, chunk_size: int = 4 * 1024 * 1024) -> None:
@@ -65,7 +66,7 @@ def run_benchmark(
 
     _write_pattern(source, size_bytes, chunk_size=chunk_size)
 
-    syncer = DeltaSynchronizer(block_size=block_size)
+    syncer = DeltaStrategy(block_size=block_size)
 
     start = time.perf_counter()
     syncer.sync_file(source, destination)
