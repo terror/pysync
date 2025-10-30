@@ -34,16 +34,19 @@ class HelpFormatter(argparse.HelpFormatter):
     if usage is not None:
       return usage
 
-    _ = groups  # groups unused; required by parent signature
+    _ = groups
 
     parts: list[str] = []
+
     for action in actions:
       if isinstance(action, argparse._HelpAction):
         continue
 
       display: str
+
       if action.option_strings:
         option = action.option_strings[0]
+
         if action.nargs == 0:
           display = option
         else:
@@ -54,10 +57,12 @@ class HelpFormatter(argparse.HelpFormatter):
 
       if not action.required:
         display = f'[{display}]'
+
       parts.append(display)
 
     usage_prefix = prefix or 'usage: '
     usage_line = f'{usage_prefix}{self._prog} {" ".join(parts)}\n\n'
+
     return usage_line
 
   def _format_action_invocation(self, action: argparse.Action) -> str:
@@ -69,11 +74,14 @@ class HelpFormatter(argparse.HelpFormatter):
 
     if isinstance(action, argparse._HelpAction):
       return '-h --help'
+
     if action.nargs == 0:
       return action.option_strings[0]
+
     if action.required:
       metavar = self._metavar_formatter(action, action.dest)(1)[0]
       return f'{action.option_strings[0]} {metavar}'
+
     return action.option_strings[0]
 
   def _format_action(self, action: argparse.Action) -> str:

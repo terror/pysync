@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from pysync.__main__ import main as cli_main
-from pysync.sync import DeltaSynchronizer, SyncAction, SyncError, SyncStats, sync
+from pysync.stats import SyncStats
+from pysync.strategy import DeltaStrategy
+from pysync.sync import SyncAction, SyncError, sync
 
 sync_module = importlib.import_module('pysync.sync')
 
@@ -319,7 +321,7 @@ def test_delta_sync_reuses_existing_blocks(tmp_path: Path) -> None:
   dst_file.write_bytes(original)
   src_file.write_bytes(modified)
 
-  strategy = DeltaSynchronizer(block_size=block_size)
+  strategy = DeltaStrategy(block_size=block_size)
 
   sync(src_dir, dst_dir, strategy=strategy)
 
@@ -357,7 +359,7 @@ def test_delta_sync_handles_missing_destination(tmp_path: Path) -> None:
   src_file = src_dir / 'file.txt'
   src_file.write_text('content')
 
-  strategy = DeltaSynchronizer()
+  strategy = DeltaStrategy()
   assert strategy.get_stats_for(dst_dir / 'file.txt') is None
 
   sync(src_dir, dst_dir, strategy=strategy)
@@ -384,7 +386,7 @@ def test_delta_sync_truncates_when_source_shrinks(tmp_path: Path) -> None:
   dst_file.write_text('some longer content')
   src_file.write_text('')
 
-  strategy = DeltaSynchronizer()
+  strategy = DeltaStrategy()
   assert strategy.get_stats_for(dst_dir / 'file.txt') is None
 
   sync(src_dir, dst_dir, strategy=strategy)
